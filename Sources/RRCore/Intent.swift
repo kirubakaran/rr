@@ -52,11 +52,15 @@ public struct Intent: Codable, Equatable, Sendable {
         public var months: [Int] = []
         public var anchorMonth: Int?
         public var count: Int?
+        public var durationAmount: Int?
+        public var durationUnit: DurationUnit?
         public var until: String?
+        public enum DurationUnit: String, Codable, Sendable { case day, week, month, year }
 
         enum CodingKeys: String, CodingKey {
             case unit, interval, weekdays, ordinal, months, count, until
             case monthDays = "month_days", anchorMonth = "anchor_month"
+            case durationAmount = "duration_amount", durationUnit = "duration_unit"
         }
         public init() {}
         public init(from decoder: Decoder) throws {
@@ -69,6 +73,8 @@ public struct Intent: Codable, Equatable, Sendable {
             months = try c.decodeIfPresent([Int].self, forKey: .months) ?? []
             anchorMonth = try c.decodeIfPresent(Int.self, forKey: .anchorMonth)
             count = try c.decodeIfPresent(Int.self, forKey: .count)
+            durationAmount = try c.decodeIfPresent(Int.self, forKey: .durationAmount)
+            durationUnit = try c.decodeIfPresent(DurationUnit.self, forKey: .durationUnit)
             until = try c.decodeIfPresent(String.self, forKey: .until)
         }
     }
@@ -137,6 +143,8 @@ public struct Intent: Codable, Equatable, Sendable {
                 "months": ints,
                 "anchor_month": nullable("integer"),
                 "count": nullable("integer"),
+                "duration_amount": nullable("integer"),
+                "duration_unit": ["type": ["string", "null"], "enum": ["day", "week", "month", "year", NSNull()]],
                 "until": nullable("string"),
             ]),
             "alerts": ["type": "array", "items": object([
@@ -176,8 +184,10 @@ public struct Intent: Codable, Equatable, Sendable {
           - month_days: days of the month for a monthly or yearly rule ("on the 10th" is [10]). -1 means the last day of the month.
           - months: for a yearly rule, the months it occurs in, 1 to 12. "every April 15" is year, 1, months [4], month_days [15]. Several dates a year that share the day of the month ("the 15th of January, April, June and September") are one yearly rule with those months.
           - anchor_month: only for a monthly rule with interval above 1 and no stated start: the month the cycle is aligned to. For "every quarter" use 1 and add the assumption "quarters start in January". Otherwise null.
-          - count: the number of occurrences if the user limits it ("for 10 weeks" is 10), otherwise null.
+          - count: only when the user gives a number of occurrences ("10 times", "the next 5 payments"), otherwise null.
+          - duration_amount and duration_unit: when the user says how long the repetition lasts ("for 10 weeks" is 10 and week, "for the next 3 months" is 3 and month), otherwise null. Never turn a length of time into a count or an end date.
           - until: "YYYY-MM-DD" if the user states an end date, otherwise null.
+          - Use at most one of count, duration and until.
         - alerts: early alerts before the due time ("remind me 3 days before" is amount 3, unit day). Empty if none. Do not add an alert for the due time itself.
         - assumptions: one short phrase for each choice you made that the user did not state and that could reasonably have gone another way. Do not mention the time of day. Empty if none.
         - unsupported: normally null. If the request cannot be represented with these fields (dates that differ in day of month, exceptions such as "except holidays", locations), one sentence saying what cannot be expressed. Still fill in the other fields as well as you can.

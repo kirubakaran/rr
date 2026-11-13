@@ -23,12 +23,22 @@ public struct TimeOfDay: Equatable, Comparable, Sendable, CustomStringConvertibl
     }
 }
 
+extension Calendar {
+    /// Gregorian in the user's time zone. rr's dates are Gregorian throughout, so the
+    /// user's own calendar setting (Buddhist, Japanese, ...) must never be used to read them.
+    public static var gregorianLocal: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = .current
+        return c
+    }
+}
+
 /// The current moment as the resolver needs it, passed in so tests are deterministic.
 public struct Now: Sendable {
     public let day: Day, time: TimeOfDay
     public init(day: Day, time: TimeOfDay) { self.day = day; self.time = time }
 
-    public init(date: Date = Date(), calendar: Calendar = .current) {
+    public init(date: Date = Date(), calendar: Calendar = .gregorianLocal) {
         let c = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         day = Day(c.year!, c.month!, c.day!)!
         time = TimeOfDay(hour: c.hour!, minute: c.minute!)!
@@ -93,6 +103,7 @@ public struct Plan: Equatable, Sendable {
             break
         case .date:
             if let y = s.year {
+                try Plan.check(y, 1900...2200, "year")
                 guard let m = s.month, let d = Day(y, m, s.day ?? 1) else {
                     throw PlanError.invalid("start date does not exist")
                 }
@@ -109,9 +120,10 @@ public struct Plan: Equatable, Sendable {
             }
             guard stated != nil else { throw PlanError.invalid("start date does not exist") }
         case .offset:
-            guard let n = s.offsetAmount, n >= 0, let unit = s.offsetUnit else {
+            guard let n = s.offsetAmount, let unit = s.offsetUnit else {
                 throw PlanError.invalid("relative start has no amount or unit")
             }
+            try Plan.check(n, 0...1000, "relative start")
             switch unit {
             case .day: stated = today.adding(days: n)
             case .week: stated = today.adding(days: 7 * n)
@@ -150,7 +162,7 @@ public struct Plan: Equatable, Sendable {
 
         var seen = Set<Int>()
         alerts = try intent.alerts.map { a -> Alert in
-            guard a.amount > 0 else { throw PlanError.invalid("alert amount must be positive") }
+            try Plan.check(a.amount, 1...1000, "alert amount")
             let unitSeconds = [.minute: 60, .hour: 3600, .day: 86400, .week: 604_800][a.unit]!
             return Alert(secondsBefore: a.amount * unitSeconds,
                          label: "\(a.amount) \(a.unit.rawValue)\(a.amount == 1 ? "" : "s") before")
@@ -159,10 +171,17 @@ public struct Plan: Equatable, Sendable {
         .sorted { $0.secondsBefore > $1.secondsBefore }
     }
 
+    /// Rejects numbers outside a practical range before any arithmetic is done with them.
+    private static func check(_ n: Int, _ range: ClosedRange<Int>, _ what: String) throws {
+        guard range.contains(n) else {
+            throw PlanError.invalid("\(what) must be between \(range.lowerBound) and \(range.upperBound), not \(n)")
+        }
+    }
+
     /// Makes every field of the rule explicit and finds the first occurrence.
     private static func rule(_ r: Intent.Recurrence, stated: Day?, today: Day, searchFrom: Day,
                              assumptions: inout [String]) throws -> (Rule, Day) {
-        guard r.interval >= 1 else { throw PlanError.invalid("repeat interval must be at least 1") }
+        try check(r.interval, 1...1000, "repeat interval")
         let base = stated ?? today
         let inferred = stated == nil
         var weekdays = Weekday.allCases.filter(r.weekdays.contains)
@@ -221,44 +240,62 @@ public struct Plan: Equatable, Sendable {
             }
         }
 
+        // At most one limit: a count, an end date, or a length of time.
+        let until = r.until.flatMap { $0.isEmpty ? nil : $0 }
+        guard [r.count != nil, until != nil, r.durationAmount != nil].filter({ $0 }).count <= 1 else {
+            throw PlanError.invalid("more than one limit given (a count, an end date, a duration); state one")
+        }
         var end: Rule.End?
         if let n = r.count {
-            guard n >= 1 else { throw PlanError.invalid("occurrence count must be at least 1") }
+            try check(n, 1...10000, "occurrence count")
             end = .count(n)
-        } else if let text = r.until, !text.isEmpty {
-            guard let last = Day(iso: text) else { throw PlanError.invalid("end date \"\(text)\" is not YYYY-MM-DD") }
+        } else if let until {
+            guard let last = Day(iso: until) else { throw PlanError.invalid("end date \"\(until)\" is not YYYY-MM-DD") }
+            try check(last.year, 1900...2200, "end year")
             end = .until(last)
         }
 
-        let rule = Rule(unit: unit, interval: r.interval, weekdays: weekdays, ordinal: ordinal,
+        var rule = Rule(unit: unit, interval: r.interval, weekdays: weekdays, ordinal: ordinal,
                         monthDays: monthDays, months: months, end: end)
 
         // Where the cycle is counted from, and the earliest acceptable first date.
         let anchor: Day, earliest: Day
         if let stated {
             anchor = stated; earliest = stated
+        } else if unit == .month, r.interval > 1, let m = r.anchorMonth, (1...12).contains(m) {
+            anchor = Day(today.year - 1, m, 1)!; earliest = searchFrom
         } else {
-            earliest = searchFrom
+            // Start at the soonest date that matches, and count "every other" from there.
+            // (Every four years on February 29 has to start in a leap year.)
+            let periodStart: Day
             switch unit {
-            case .day, .week:
-                // Start at the soonest matching day and count "every other" from there.
-                var soonest = rule
-                soonest.interval = 1
-                anchor = soonest.first(onOrAfter: searchFrom, anchor: searchFrom) ?? searchFrom
-            case .month:
-                if r.interval > 1, let m = r.anchorMonth, (1...12).contains(m) {
-                    anchor = Day(today.year - 1, m, 1)!
-                } else {
-                    anchor = Day(today.year, today.month, 1)!
-                }
-            case .year:
-                anchor = Day(today.year, 1, 1)!
+            case .day, .week: periodStart = searchFrom
+            case .month: periodStart = Day(searchFrom.year, searchFrom.month, 1)!
+            case .year: periodStart = Day(searchFrom.year, 1, 1)!
             }
+            var soonest = rule
+            soonest.interval = 1
+            anchor = soonest.first(onOrAfter: searchFrom, anchor: periodStart) ?? periodStart
+            earliest = searchFrom
         }
         guard let first = rule.first(onOrAfter: earliest, anchor: anchor) else {
             throw PlanError.invalid("that schedule never occurs")
         }
-        if case .until(let last) = end, last < first {
+
+        // A length of time ("for 10 weeks") runs from the first occurrence.
+        if let n = r.durationAmount {
+            guard let durationUnit = r.durationUnit else { throw PlanError.invalid("duration has no unit") }
+            try check(n, 1...1000, "duration")
+            let after: Day
+            switch durationUnit {
+            case .day: after = first.adding(days: n)
+            case .week: after = first.adding(days: 7 * n)
+            case .month: after = first.adding(months: n)
+            case .year: after = first.adding(months: 12 * n)
+            }
+            rule.end = .until(after.adding(days: -1))
+        }
+        if case .until(let last) = rule.end, last < first {
             throw PlanError.invalid("the end date \(last) is before the first occurrence \(first)")
         }
         return (rule, first)

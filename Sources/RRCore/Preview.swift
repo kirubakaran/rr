@@ -71,7 +71,7 @@ public enum Format {
 extension Plan {
     /// The text shown before asking to create. `calendar` supplies the time zone used
     /// to work out when each early alert actually fires.
-    public func preview(listName: String, currentYear: Int, calendar: Calendar = .current,
+    public func preview(listName: String, currentYear: Int, calendar: Calendar = .gregorianLocal,
                         count: Int = 4) -> String {
         var lines = [title]
         func add(_ label: String, _ value: String) {
@@ -79,18 +79,27 @@ extension Plan {
         }
         add("list", listName)
 
+        // The instant the reminder is due, as the calendar resolves it.
+        var dueDate: Date?
+        if let first, let time {
+            dueDate = calendar.date(from: DateComponents(
+                year: first.year, month: first.month, day: first.day, hour: time.hour, minute: time.minute))
+        }
         if let first {
             var due = "\(first.weekday.short), \(Format.date(first, currentYear: currentYear))"
-            if let time { due += ", \(time)" }
+            if let time {
+                // A time skipped by a clock change does not exist; show what it becomes.
+                let actual = dueDate.map { Now(date: $0, calendar: calendar).time } ?? time
+                due += ", \(actual)"
+                if actual != time { due += " (\(time) does not exist that day; the clocks change)" }
+            }
             add("due", due)
         } else {
             add("due", "no date")
         }
         if let rule { add("repeats", Format.describe(rule)) }
 
-        if let first, let time {
-            let dueDate = calendar.date(from: DateComponents(
-                year: first.year, month: first.month, day: first.day, hour: time.hour, minute: time.minute))!
+        if let dueDate {
             for alert in alerts {
                 let fires = Now(date: dueDate.addingTimeInterval(-Double(alert.secondsBefore)), calendar: calendar)
                 let on = "\(fires.day.weekday.short), \(Format.date(fires.day, currentYear: currentYear)), \(fires.time)"

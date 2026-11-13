@@ -56,7 +56,7 @@ public struct Config: Sendable {
             guard let parsed = TimeOfDay(t) else { throw ModelError("default_time must be HH:MM, not \"\(t)\"") }
             c.defaultTime = parsed
         }
-        if let n = file["preview_count"] as? Int, n >= 1 { c.previewCount = n }
+        if let n = file["preview_count"] as? Int, (1...50).contains(n) { c.previewCount = n }
         guard !c.model.isEmpty else {
             throw ModelError("no model set for provider \"openai\"; set \"model\" in \(c.path) or RR_MODEL")
         }
@@ -72,33 +72,40 @@ public enum APIKey {
     public enum Source: String { case environment = "environment", keychain = "Keychain" }
     static let service = "rr"
 
+    /// The Keychain account: one stored key per provider.
+    static func account(_ config: Config) -> String { config.provider.rawValue }
+
     public static func find(config: Config,
                             env: [String: String] = ProcessInfo.processInfo.environment) -> (key: String, source: Source)? {
         if let key = env[config.apiKeyEnv], !key.isEmpty { return (key, .environment) }
-        let (status, output) = security(["find-generic-password", "-s", service, "-a", config.apiKeyEnv, "-w"],
-                                        capture: true)
+        let (status, output) = security(["find-generic-password", "-s", service, "-a", account(config), "-w"])
         let key = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return status == 0 && !key.isEmpty ? (key, .keychain) : nil
     }
 
-    /// Prompts for the key on the terminal (not echoed, never in argv) and stores it.
-    public static func store(config: Config) -> Bool {
-        // A trailing -w makes `security` ask for the secret itself.
-        security(["add-generic-password", "-U", "-s", service, "-a", config.apiKeyEnv,
-                  "-l", "rr API key (\(config.apiKeyEnv))", "-w"], capture: false).status == 0
+    /// Saves the key, replacing any earlier one. The key is sent to `security` on its
+    /// standard input, so it never appears in a process argument list.
+    public static func store(_ key: String, config: Config) -> Bool {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.~+/="))
+        guard !key.isEmpty, key.unicodeScalars.allSatisfy(allowed.contains) else { return false }
+        let command = "add-generic-password -U -s \(service) -a \(account(config)) -l \"rr API key\" -w \"\(key)\"\n"
+        return security(["-i"], input: command).status == 0
     }
 
-    private static func security(_ arguments: [String], capture: Bool) -> (status: Int32, output: String) {
+    private static func security(_ arguments: [String], input: String? = nil) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = arguments
-        let pipe = Pipe()
-        if capture {
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-        }
+        let output = Pipe(), stdin = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = input == nil ? FileHandle.nullDevice : stdin
         do { try process.run() } catch { return (-1, "") }
-        let data = capture ? pipe.fileHandleForReading.readDataToEndOfFile() : Data()
+        if let input {
+            stdin.fileHandleForWriting.write(Data(input.utf8))
+            try? stdin.fileHandleForWriting.close()
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }

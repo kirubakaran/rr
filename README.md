@@ -63,10 +63,9 @@ The API key is never read from the file. Store it once in the macOS Keychain:
 rr --set-key
 ```
 
-It prompts for the key without showing it. If the environment variable named
-by `api_key_env` is set, that takes precedence, which suits CI or a one-off
-override. To remove the stored key:
-`security delete-generic-password -s rr -a ANTHROPIC_API_KEY`.
+The environment variable named by `api_key_env` takes precedence when it is
+set, which suits CI or a one-off override. To remove the stored key:
+`security delete-generic-password -s rr -a anthropic`.
 
 The Keychain item is read through `/usr/bin/security`, so other programs
 running as you can read it the same way; it is kept out of your shell
@@ -133,7 +132,7 @@ command and the EventKit writer.
 - every N years in chosen months, on one day of the month or an ordinal weekday.
   This covers several fixed dates a year that share a day, such as the 15th of
   January, April, June and September.
-- an end after a count or on a date
+- an end after a count, on a date, or after a length of time ("for 10 weeks")
 - early alerts as minutes, hours, days or weeks before the due time
 
 A timed reminder also gets an alarm at the due time itself; without one,

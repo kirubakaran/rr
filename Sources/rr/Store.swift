@@ -29,7 +29,14 @@ final class Store {
         store.calendars(for: .reminder).filter(\.allowsContentModifications)
     }
 
-    var listNames: [String] { lists.map(\.title).sorted() }
+    /// Distinct names, for the model to match against.
+    var listNames: [String] { Array(Set(lists.map(\.title))).sorted() }
+
+    /// The list's name, with its account when another list shares the name.
+    func displayName(_ list: EKCalendar) -> String {
+        let shared = lists.filter { $0.title.caseInsensitiveCompare(list.title) == .orderedSame }.count > 1
+        return shared ? "\(list.title) (\(list.source.title))" : list.title
+    }
 
     /// The list to write to: the named one (case-insensitive) or the default list.
     func list(named name: String?) throws -> EKCalendar {
@@ -39,9 +46,17 @@ final class Store {
             }
             return list
         }
-        guard let list = lists.first(where: { $0.title.caseInsensitiveCompare(name) == .orderedSame }) else {
+        let matches = lists.filter { $0.title.caseInsensitiveCompare(name) == .orderedSame }
+        guard let list = matches.first else {
             throw StoreError(description:
                 "No list named \"\(name)\". Lists: \(listNames.joined(separator: ", ")).")
+        }
+        // Two accounts can each have a list with this name; never pick one silently.
+        guard matches.count == 1 else {
+            let accounts = matches.map(\.source.title).joined(separator: ", ")
+            throw StoreError(description:
+                "\(matches.count) lists are named \"\(name)\" (accounts: \(accounts)). " +
+                "rr cannot tell them apart; rename one in Reminders.")
         }
         return list
     }
@@ -53,6 +68,7 @@ final class Store {
         reminder.notes = plan.notes
         if let first = plan.first {
             reminder.dueDateComponents = DateComponents(
+                calendar: .gregorianLocal,
                 year: first.year, month: first.month, day: first.day,
                 hour: plan.time?.hour, minute: plan.time?.minute)
         }
@@ -72,7 +88,7 @@ final class Store {
 }
 
 /// Converts the rule the preview was computed from into EventKit's form.
-func recurrenceRule(_ rule: Rule, calendar: Calendar = .current) -> EKRecurrenceRule {
+func recurrenceRule(_ rule: Rule, calendar: Calendar = .gregorianLocal) -> EKRecurrenceRule {
     func weekday(_ w: Weekday) -> EKWeekday { EKWeekday(rawValue: w.number)! }
 
     let frequency: EKRecurrenceFrequency

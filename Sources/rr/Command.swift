@@ -18,6 +18,16 @@ Usage:
 Nothing is created until you answer y.
 """
 
+/// Reads one line without echoing it; from a pipe when standard input is not a terminal.
+func readSecret(prompt: String) -> String? {
+    guard isatty(STDIN_FILENO) != 0 else {
+        return readLine()?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    var buffer = [CChar](repeating: 0, count: 2048)
+    guard readpassphrase(prompt, &buffer, buffer.count, RPP_ECHO_OFF) != nil else { return nil }
+    return String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data(("rr: " + message + "\n").utf8))
     exit(1)
@@ -54,9 +64,10 @@ struct Command {
         do {
             let config = try Config.load()
             if setKey {
-                print("Paste the API key for \(config.provider.rawValue) (stored as \(config.apiKeyEnv)); it is not shown.")
-                guard APIKey.store(config: config) else { fail("the key was not stored") }
-                print("Stored in the Keychain.")
+                let name = config.provider == .anthropic ? "Anthropic" : "OpenAI-compatible"
+                guard let key = readSecret(prompt: "\(name) API key: "), !key.isEmpty else { fail("no key entered") }
+                guard APIKey.store(key, config: config) else { fail("could not save the key to the Keychain") }
+                print("Saved to the macOS Keychain.")
                 exit(0)
             }
             if showConfig {
@@ -66,7 +77,7 @@ struct Command {
                 provider:    \(config.provider.rawValue)
                 model:       \(config.model)
                 endpoint:    \(config.endpoint)
-                api key:     \(keySource.map { "from the \($0)" } ?? "not set") ($\(config.apiKeyEnv), or `rr --set-key`)
+                api key:     \(keySource.map { "from the \($0)" } ?? "not set; run `rr --set-key`")
                 effort:      \(config.effort.isEmpty ? "(not sent)" : config.effort)
                 default due time: \(config.defaultTime)
                 """)
@@ -100,7 +111,7 @@ struct Command {
 
             let plan = try Plan(intent, now: now, defaultTime: config.defaultTime)
             let list = try store?.list(named: plan.list)
-            let listName = list?.title ?? plan.list ?? "(default list)"
+            let listName = list.flatMap { store?.displayName($0) } ?? plan.list ?? "(default list)"
             print(plan.preview(listName: listName, currentYear: now.day.year, count: config.previewCount))
 
             guard let store, let list else { exit(0) }
@@ -111,7 +122,7 @@ struct Command {
                 exit(0)
             }
             try store.create(plan, in: list)
-            print("Created in \(list.title).")
+            print("Created in \(store.displayName(list)).")
         } catch {
             fail("\(error)")
         }

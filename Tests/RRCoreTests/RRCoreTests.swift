@@ -219,6 +219,80 @@ final class RRCoreTests: XCTestCase {
         XCTAssertThrowsError(try plan(#"{"title": "x", "recurrence": {"unit": "month", "month_days": [40]}}"#))
     }
 
+    // MARK: - Review fixes
+
+    func testLeapDayEveryFourYears() throws {
+        let p = try plan("""
+        {"title": "x", "recurrence": {"unit": "year", "interval": 4, "months": [2], "month_days": [29]}}
+        """)
+        XCTAssertEqual(dates(p, 3), ["2028-02-29", "2032-02-29", "2036-02-29"])
+    }
+
+    func testEveryOtherMonthStartsAtSoonestMatch() throws {
+        let p = try plan(#"{"title": "x", "recurrence": {"unit": "month", "interval": 2, "month_days": [5]}}"#)
+        XCTAssertEqual(dates(p, 2), ["2026-12-05", "2027-02-05"])
+    }
+
+    func testDurationIsNotACount() throws {
+        // Ten weeks of weekdays is fifty reminders, ending the day before week eleven.
+        let p = try plan("""
+        {"title": "x", "recurrence": {"unit": "week", "weekdays": ["mon", "tue", "wed", "thu", "fri"],
+                                      "duration_amount": 10, "duration_unit": "week"}}
+        """)
+        XCTAssertEqual(p.first, Day(2026, 11, 13))
+        XCTAssertEqual(p.rule?.end, .until(Day(2027, 1, 21)!))
+        XCTAssertEqual(p.upcoming(1000).count, 50)
+
+        let months = try plan("""
+        {"title": "x", "start": {"kind": "date", "year": 2027, "month": 1, "day": 31},
+         "recurrence": {"unit": "day", "duration_amount": 1, "duration_unit": "month"}}
+        """)
+        XCTAssertEqual(months.rule?.end, .until(Day(2027, 2, 27)!))
+    }
+
+    func testConflictingLimitsAreRejected() {
+        XCTAssertThrowsError(try plan(#"{"title": "x", "recurrence": {"unit": "day", "count": 10, "until": "2026-11-14"}}"#))
+        XCTAssertThrowsError(try plan("""
+        {"title": "x", "recurrence": {"unit": "day", "count": 10, "duration_amount": 2, "duration_unit": "week"}}
+        """))
+    }
+
+    func testHugeNumbersAreRejectedNotCrashed() {
+        let huge = Int.max
+        for json in [
+            #"{"title": "x", "time": "09:00", "alerts": [{"amount": \#(huge), "unit": "week"}]}"#,
+            #"{"title": "x", "start": {"kind": "offset", "offset_amount": \#(huge), "offset_unit": "week"}}"#,
+            #"{"title": "x", "start": {"kind": "offset", "offset_amount": \#(huge), "offset_unit": "month"}}"#,
+            #"{"title": "x", "start": {"kind": "date", "year": \#(huge), "month": 1, "day": 1}}"#,
+            #"{"title": "x", "recurrence": {"unit": "week", "interval": \#(huge)}}"#,
+            #"{"title": "x", "recurrence": {"unit": "year", "interval": \#(huge)}}"#,
+            #"{"title": "x", "recurrence": {"unit": "day", "count": \#(huge)}}"#,
+            #"{"title": "x", "recurrence": {"unit": "day", "duration_amount": \#(huge), "duration_unit": "year"}}"#,
+            #"{"title": "x", "recurrence": {"unit": "day", "until": "999999999-01-01"}}"#,
+        ] {
+            XCTAssertThrowsError(try plan(json), json)
+        }
+    }
+
+    func testNonexistentTimeIsShownAdjusted() throws {
+        // 2:30 AM does not exist on 2027-03-14 in Los Angeles.
+        let p = try plan("""
+        {"title": "x", "start": {"kind": "date", "year": 2027, "month": 3, "day": 14}, "time": "02:30",
+         "alerts": [{"amount": 30, "unit": "minute"}]}
+        """)
+        let text = p.preview(listName: "L", currentYear: 2026, calendar: pacific)
+        XCTAssertTrue(text.contains(
+            "due:     Sun, Mar 14, 2027, 3:30 AM (2:30 AM does not exist that day; the clocks change)"), text)
+        XCTAssertTrue(text.contains("alert:   30 minutes before (Sun, Mar 14, 2027, 3:00 AM)"), text)
+    }
+
+    func testDatesAreReadAsGregorian() {
+        // Whatever calendar the user has set, "now" must come out in Gregorian years.
+        let date = Date(timeIntervalSince1970: 1_794_500_000) // November 2026
+        XCTAssertEqual(Calendar.gregorianLocal.identifier, .gregorian)
+        XCTAssertEqual(Now(date: date).day.year, 2026)
+    }
+
     func testSchemaIsSerializable() throws {
         let data = try JSONSerialization.data(withJSONObject: Intent.schema)
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("anchor_month"))
