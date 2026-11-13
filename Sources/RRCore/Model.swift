@@ -64,6 +64,46 @@ public struct Config: Sendable {
     }
 }
 
+/// Where the API key lives: the environment variable wins, then the macOS Keychain.
+///
+/// The Keychain item is read and written through `/usr/bin/security`, not the Security
+/// framework, so a rebuilt (re-signed) rr does not trigger a Keychain password prompt.
+public enum APIKey {
+    public enum Source: String { case environment = "environment", keychain = "Keychain" }
+    static let service = "rr"
+
+    public static func find(config: Config,
+                            env: [String: String] = ProcessInfo.processInfo.environment) -> (key: String, source: Source)? {
+        if let key = env[config.apiKeyEnv], !key.isEmpty { return (key, .environment) }
+        let (status, output) = security(["find-generic-password", "-s", service, "-a", config.apiKeyEnv, "-w"],
+                                        capture: true)
+        let key = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return status == 0 && !key.isEmpty ? (key, .keychain) : nil
+    }
+
+    /// Prompts for the key on the terminal (not echoed, never in argv) and stores it.
+    public static func store(config: Config) -> Bool {
+        // A trailing -w makes `security` ask for the secret itself.
+        security(["add-generic-password", "-U", "-s", service, "-a", config.apiKeyEnv,
+                  "-l", "rr API key (\(config.apiKeyEnv))", "-w"], capture: false).status == 0
+    }
+
+    private static func security(_ arguments: [String], capture: Bool) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        let pipe = Pipe()
+        if capture {
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+        }
+        do { try process.run() } catch { return (-1, "") }
+        let data = capture ? pipe.fileHandleForReading.readDataToEndOfFile() : Data()
+        process.waitUntilExit()
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+}
+
 public struct ModelError: Error, CustomStringConvertible {
     public let description: String
     public init(_ description: String) { self.description = description }
@@ -73,13 +113,13 @@ public struct ModelError: Error, CustomStringConvertible {
 public func extractIntent(sentence: String, lists: [String], today: Day, config: Config,
                           env: [String: String] = ProcessInfo.processInfo.environment) async throws -> Intent {
     let system = Intent.systemPrompt(today: today, lists: lists)
-    let key = env[config.apiKeyEnv].flatMap { $0.isEmpty ? nil : $0 }
+    let key = APIKey.find(config: config, env: env)?.key
     let text: String
     switch config.provider {
     case .anthropic:
         guard let key else {
-            throw ModelError("\(config.apiKeyEnv) is not set. Export an Anthropic API key, " +
-                             "or point rr at another provider in \(config.path).")
+            throw ModelError("no Anthropic API key. Run `rr --set-key` to store one in the Keychain, " +
+                             "or set \(config.apiKeyEnv), or choose another provider in \(config.path).")
         }
         text = try await anthropic(sentence: sentence, system: system, key: key, config: config)
     case .openai:

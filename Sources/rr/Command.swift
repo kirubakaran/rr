@@ -12,6 +12,7 @@ Usage:
   rr --show-intent "..." also print the JSON the model returned
   rr --lists             print your Reminders lists
   rr --config            print the settings in effect
+  rr --set-key           store the API key in the macOS Keychain
   rr --version | --help
 
 Nothing is created until you answer y.
@@ -26,7 +27,7 @@ func fail(_ message: String) -> Never {
 struct Command {
     // An explicit async entry point: top-level async code in main.swift crashed in release builds.
     static func main() async {
-        var dryRun = false, showIntent = false, showLists = false, showConfig = false
+        var dryRun = false, showIntent = false, showLists = false, showConfig = false, setKey = false
         var intentFile: String?
         var words: [String] = []
         var arguments = Array(CommandLine.arguments.dropFirst())
@@ -37,6 +38,7 @@ struct Command {
             case "--show-intent": showIntent = true
             case "--lists": showLists = true
             case "--config": showConfig = true
+            case "--set-key": setKey = true
             case "--intent":
                 guard !arguments.isEmpty else { fail("--intent needs a file") }
                 intentFile = arguments.removeFirst()
@@ -51,13 +53,20 @@ struct Command {
 
         do {
             let config = try Config.load()
+            if setKey {
+                print("Paste the API key for \(config.provider.rawValue) (stored as \(config.apiKeyEnv)); it is not shown.")
+                guard APIKey.store(config: config) else { fail("the key was not stored") }
+                print("Stored in the Keychain.")
+                exit(0)
+            }
             if showConfig {
+                let keySource = APIKey.find(config: config)?.source.rawValue
                 print("""
                 config file: \(config.path)\(FileManager.default.fileExists(atPath: config.path) ? "" : " (not present; defaults)")
                 provider:    \(config.provider.rawValue)
                 model:       \(config.model)
                 endpoint:    \(config.endpoint)
-                api key:     $\(config.apiKeyEnv) \(ProcessInfo.processInfo.environment[config.apiKeyEnv]?.isEmpty == false ? "(set)" : "(not set)")
+                api key:     \(keySource.map { "from the \($0)" } ?? "not set") ($\(config.apiKeyEnv), or `rr --set-key`)
                 effort:      \(config.effort.isEmpty ? "(not sent)" : config.effort)
                 default due time: \(config.defaultTime)
                 """)

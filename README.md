@@ -55,8 +55,23 @@ Optional file `~/.config/rr/config.json`; `RR_PROVIDER`, `RR_MODEL` and
 }
 ```
 
-Those are the defaults. The API key is read from the environment variable
-named by `api_key_env`, never from the file. For a local model through Ollama:
+Those are the defaults.
+
+The API key is never read from the file. Store it once in the macOS Keychain:
+
+```
+rr --set-key
+```
+
+It prompts for the key without showing it. If the environment variable named
+by `api_key_env` is set, that takes precedence, which suits CI or a one-off
+override. To remove the stored key:
+`security delete-generic-password -s rr -a ANTHROPIC_API_KEY`.
+
+The Keychain item is read through `/usr/bin/security`, so other programs
+running as you can read it the same way; it is kept out of your shell
+environment and dotfiles, not locked to rr.
+ For a local model through Ollama:
 
 ```json
 { "provider": "openai", "model": "gemma4:31b-mxfp8" }
