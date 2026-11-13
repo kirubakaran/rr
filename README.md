@@ -20,12 +20,20 @@ Create? [y/n]
 ## Install and use
 
 ```
+brew install kirubakaran/tap/rr
+rr --set-key        # paste your Anthropic API key
+```
+
+Needs macOS 14 or later and Apple's command-line developer tools; Homebrew
+builds rr from source. The first run that touches Reminders shows the macOS
+permission prompt for your terminal.
+
+To build from a clone of this repo instead:
+
+```
 make install        # builds a release binary and copies it to ~/.local/bin/rr
 make test
 ```
-
-Needs macOS 14 or later and Xcode's Swift toolchain. The first run that touches
-Reminders shows the macOS permission prompt for your terminal.
 
 ```
 rr "take out the trash every other thursday at 7pm"
