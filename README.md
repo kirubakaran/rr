@@ -8,12 +8,62 @@ interpretation, accept or reject.
 $ rr "pay estimated taxes every quarter on the 10th, remind me 3 days before"
 Pay estimated taxes
   list:    Reminders
+  due:     Sun, Jan 10, 2027, 9:00 AM
   repeats: every 3 months on the 10th
-  alert:   3 days before, 9:00 AM
-  next:    Jan 10, Apr 10, Jul 10, Oct 10
-  assumed: quarters start in January; alert time 9:00 AM (default)
+  alert:   3 days before (first: Thu, Jan 7, 2027, 9:00 AM)
+  next:    Jan 10, 2027 · Apr 10, 2027 · Jul 10, 2027 · Oct 10, 2027
+  assumed: quarters start in January; due at 9:00 AM (default; an early alert needs a time)
 Create? [y/n]
 ```
+
+## Install and use
+
+```
+make install        # builds a release binary and copies it to ~/.local/bin/rr
+make test
+```
+
+Needs macOS 14 or later and Xcode's Swift toolchain. The first run that touches
+Reminders shows the macOS permission prompt for your terminal.
+
+```
+rr "take out the trash every other thursday at 7pm"
+rr --dry-run "..."      # interpretation only; never opens Reminders
+rr --show-intent "..."  # also print the JSON the model returned
+rr --intent FILE        # skip the model and use an intent JSON file
+rr --lists              # your Reminders lists
+rr --config             # settings in effect
+```
+
+Nothing is written until you answer `y`. A request outside the supported
+shapes is refused with a reason; nothing is guessed.
+
+## Settings
+
+Optional file `~/.config/rr/config.json`; `RR_PROVIDER`, `RR_MODEL` and
+`RR_ENDPOINT` override it for one run.
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "endpoint": "https://api.anthropic.com",
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "effort": "low",
+  "default_time": "09:00",
+  "preview_count": 4
+}
+```
+
+Those are the defaults. The API key is read from the environment variable
+named by `api_key_env`, never from the file. For a local model through Ollama:
+
+```json
+{ "provider": "openai", "model": "gemma4:31b-mxfp8" }
+```
+
+`provider: "openai"` means any OpenAI-compatible endpoint and defaults to
+Ollama at `http://localhost:11434/v1`.
 
 ## Why build it
 
@@ -21,7 +71,7 @@ Existing CLIs manage Reminders programmatically: you translate your intention
 into flags. This tool is for the step before that: saying a complicated
 reminder in one sentence and seeing what it will actually do before it exists.
 
-| | rr (planned) | [rem](https://github.com/BRO3886/rem) | [remi](https://github.com/mattheworiordan/remi) | [remindctl](https://github.com/steipete/remindctl) | [reminders-cli](https://github.com/keith/reminders-cli) | [Raycast Apple Reminders](https://www.raycast.com/raycast/apple-reminders) |
+| | rr | [rem](https://github.com/BRO3886/rem) | [remi](https://github.com/mattheworiordan/remi) | [remindctl](https://github.com/steipete/remindctl) | [reminders-cli](https://github.com/keith/reminders-cli) | [Raycast Apple Reminders](https://www.raycast.com/raycast/apple-reminders) |
 |---|---|---|---|---|---|---|
 | Kind | CLI | CLI | CLI | CLI | CLI | Raycast extension |
 | Input | one sentence | flags | flags | flags | flags | one sentence (AI Quick Add) |
@@ -46,12 +96,33 @@ an early alert that is known to repeat.
 
 ## How it works
 
-1. An LLM turns the sentence into a small JSON object (title, list, due date,
-   recurrence, alerts, assumptions made), with output constrained to a schema.
-2. Code, not the model, computes the actual dates and prints the next few
-   occurrences. That list is what makes accept/reject trustworthy.
-3. On `y`, the reminder is written through EventKit and iCloud syncs it to the
-   phone.
+1. An LLM turns the sentence into a small JSON object (title, list, start,
+   time, recurrence, alerts, assumptions made), with output constrained to a
+   schema. It is told today's date and your list names, nothing else.
+2. Code, not the model, resolves that into a plan: the first due date, an
+   explicit recurrence rule and alert offsets. It prints the next few
+   occurrences from that rule. That list is what makes accept/reject trustworthy.
+3. On `y`, the same rule is converted to an EventKit recurrence rule and saved,
+   and iCloud syncs it to the phone.
+
+Code layout: `Sources/RRCore` holds everything except EventKit (`Intent`,
+`Rule`, `Plan`, preview, model call) and is unit tested. `Sources/rr` is the
+command and the EventKit writer.
+
+### Recurrence shapes supported
+
+- every N days
+- every N weeks on chosen weekdays
+- every N months on days of the month (including the last day), or on the
+  1st to 4th or last weekday ("the 2nd Tuesday")
+- every N years in chosen months, on one day of the month or an ordinal weekday.
+  This covers several fixed dates a year that share a day, such as the 15th of
+  January, April, June and September.
+- an end after a count or on a date
+- early alerts as minutes, hours, days or weeks before the due time
+
+A timed reminder also gets an alarm at the due time itself; without one,
+Reminders shows the time but does not notify.
 
 ## Design rules
 
@@ -72,27 +143,41 @@ is what Ollama exposes) covers nearly everything.
 - **Default: Claude Sonnet 5.5** (`claude-sonnet-5-5`), about $0.004 per
   reminder (estimate: ~700 tokens in, ~300 out at $2 / $10 per million).
 - **Cheaper: Claude Haiku 5.5**, about $0.0002 per reminder.
-- **Local: a 3–4B model via Ollama** (for example Gemma 3 4B), 2–3 GB. Reminder
-  text stays on the machine; a few seconds of cold start.
+- **Local: a model via Ollama.** Reminder text stays on the machine. Tried with
+  `gemma4:31b-mxfp8`: about 35 seconds for the first call while the model
+  loads. A 3–4B model should be faster but has not been tried.
 
 ## Constraints found so far
 
 - **EventKit is required.** AppleScript's Reminders support has no recurrence,
-  so the writer is a small Swift binary. It needs a one-time macOS permission
-  prompt for Reminders access, which needs a usage string embedded in the binary.
+  so the whole tool is one Swift binary. It needs a one-time macOS permission
+  prompt for Reminders access; the usage string is embedded at link time.
 - **Not in EventKit:** tags, subtasks, sections. `rem` reaches tags and `remi`
   reaches sections through Apple's private ReminderKit framework (`remi` also
   writes the Reminders SQLite database directly). Possible, but unsupported by
   Apple and liable to break on an OS update, so out of scope for now.
 - **Mac only.** Siri remains the phone input.
 
-## First thing to test
+## Still to test
 
-Before the parser: create one recurring reminder with a three-day-early alert
-through EventKit, complete it on the iPhone, and check that the next occurrence
-and its alert appear. Apple documents the APIs, not that end-to-end behaviour.
+Unit tests cover the date arithmetic (month ends, leap years, a daylight-saving
+change, cycle alignment) and the conversion to EventKit rules. The model path
+was run end to end against a local Ollama model in dry-run mode. Not yet done:
+
+- **A real write.** No reminder has been created yet. Create one recurring
+  reminder with a three-day-early alert, complete it on the iPhone, and check
+  that the next occurrence and both alerts appear. Apple documents the APIs,
+  not that end-to-end behaviour.
+- **Apple's dates against the preview** for the less common shapes: yearly
+  rules in several months, the 31st in short months, and every-N-weeks rules
+  that include Sunday (the preview flags that last one as an assumption).
+- **The Anthropic request.** No API key was available while building, so the
+  default provider has not been called. The request sets the server-side
+  fallback option for refusals on Claude Sonnet 5.5.
 
 ## Status
+
+Built 2026-11-13, version 0.1.0, installed at `~/.local/bin/rr`.
 
 The name `rr` clashes only with Mozilla's Linux-only record-and-replay
 debugger. `rem` and `remi` were ruled out because both are existing Apple
