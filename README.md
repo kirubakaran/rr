@@ -182,3 +182,8 @@ Built 2026-11-13, version 0.1.0, installed at `~/.local/bin/rr`.
 The name `rr` clashes only with Mozilla's Linux-only record-and-replay
 debugger. `rem` and `remi` were ruled out because both are existing Apple
 Reminders CLIs.
+
+## License
+
+Copyright 2026 Insstant LLC. Licensed under the Apache License 2.0; see
+[LICENSE](LICENSE) and [NOTICE](NOTICE).
