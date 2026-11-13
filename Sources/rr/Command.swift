@@ -3,19 +3,22 @@ import RRCore
 
 let version = "0.1.0"
 let usage = """
-rr: say a reminder in one sentence, check the schedule, accept or reject.
+rr \(version): add Apple Reminders in plain English
 
-Usage:
   rr "pay rent on the 1st of every month, remind me 2 days before"
-  rr --dry-run "..."     show the interpretation without touching Reminders
-  rr --intent FILE       use an intent JSON file instead of asking the model
-  rr --show-intent "..." also print the JSON the model returned
-  rr --lists             print your Reminders lists
-  rr --config            print the settings in effect
-  rr --set-key           store the API key in the macOS Keychain
-  rr --version | --help
 
-Nothing is created until you answer y.
+rr shows how it read the sentence and the next few dates, then asks
+before creating anything.
+
+Options:
+  -n, --dry-run    preview only, without opening Reminders
+  --lists          show your Reminders lists
+  --set-key        save your API key to the macOS Keychain
+  --config         show current settings and the config file path
+  --show-intent    also print the interpretation as JSON
+  --intent FILE    use JSON saved from --show-intent; the model is not called
+  --version
+  -h, --help
 """
 
 /// Reads one line without echoing it; from a pipe when standard input is not a terminal.

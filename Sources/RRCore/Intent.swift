@@ -114,6 +114,10 @@ public struct Intent: Codable, Equatable, Sendable {
     /// property required, nullable scalars and no nullable objects.
     public static var schema: [String: Any] {
         func nullable(_ type: String) -> [String: Any] { ["type": [type, "null"]] }
+        // Anthropic rejects an enum on a ["string", "null"] type, so a nullable enum is a union.
+        func nullableEnum(_ values: [String]) -> [String: Any] {
+            ["anyOf": [["type": "string", "enum": values], ["type": "null"]]]
+        }
         func object(_ properties: [String: Any]) -> [String: Any] {
             ["type": "object", "properties": properties,
              "required": properties.keys.sorted(), "additionalProperties": false]
@@ -130,8 +134,8 @@ public struct Intent: Codable, Equatable, Sendable {
                 "month": nullable("integer"),
                 "day": nullable("integer"),
                 "offset_amount": nullable("integer"),
-                "offset_unit": ["type": ["string", "null"], "enum": ["day", "week", "month", NSNull()]],
-                "weekday": ["type": ["string", "null"], "enum": weekdays + [NSNull()]],
+                "offset_unit": nullableEnum(["day", "week", "month"]),
+                "weekday": nullableEnum(weekdays),
             ]),
             "time": nullable("string"),
             "recurrence": object([
@@ -144,7 +148,7 @@ public struct Intent: Codable, Equatable, Sendable {
                 "anchor_month": nullable("integer"),
                 "count": nullable("integer"),
                 "duration_amount": nullable("integer"),
-                "duration_unit": ["type": ["string", "null"], "enum": ["day", "week", "month", "year", NSNull()]],
+                "duration_unit": nullableEnum(["day", "week", "month", "year"]),
                 "until": nullable("string"),
             ]),
             "alerts": ["type": "array", "items": object([

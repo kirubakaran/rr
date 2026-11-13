@@ -1,8 +1,9 @@
 # rr
 
-A text interface to Apple Reminders. The Reminders UI is infuriating and Siri
-can't do complex recurring reminders, so: type a sentence, check the
-interpretation, accept or reject.
+Add Apple Reminders from the terminal in plain English.
+
+The Reminders UI is infuriating and Siri can't do complex recurring reminders,
+so: type a sentence, check the interpretation, then accept or reject.
 
 ```
 $ rr "pay estimated taxes every quarter on the 10th, remind me 3 days before"
@@ -28,11 +29,13 @@ Reminders shows the macOS permission prompt for your terminal.
 
 ```
 rr "take out the trash every other thursday at 7pm"
-rr --dry-run "..."      # interpretation only; never opens Reminders
-rr --show-intent "..."  # also print the JSON the model returned
-rr --intent FILE        # skip the model and use an intent JSON file
-rr --lists              # your Reminders lists
-rr --config             # settings in effect
+
+  -n, --dry-run    preview only, without opening Reminders
+  --lists          show your Reminders lists
+  --set-key        save your API key to the macOS Keychain
+  --config         show current settings and the config file path
+  --show-intent    also print the interpretation as JSON
+  --intent FILE    use JSON saved from --show-intent; the model is not called
 ```
 
 Nothing is written until you answer `y`. A request outside the supported
@@ -176,7 +179,8 @@ is what Ollama exposes) covers nearly everything.
 
 Unit tests cover the date arithmetic (month ends, leap years, a daylight-saving
 change, cycle alignment) and the conversion to EventKit rules. The model path
-was run end to end against a local Ollama model in dry-run mode. Not yet done:
+was run end to end in dry-run mode against Claude Sonnet 5.5 and a local
+Ollama model. Not yet done:
 
 - **A real write.** No reminder has been created yet. Create one recurring
   reminder with a three-day-early alert, complete it on the iPhone, and check
@@ -185,9 +189,9 @@ was run end to end against a local Ollama model in dry-run mode. Not yet done:
 - **Apple's dates against the preview** for the less common shapes: yearly
   rules in several months, the 31st in short months, and every-N-weeks rules
   that include Sunday (the preview flags that last one as an assumption).
-- **The Anthropic request.** No API key was available while building, so the
-  default provider has not been called. The request sets the server-side
-  fallback option for refusals on Claude Sonnet 5.5.
+- **Refusal fallback.** The Anthropic request sets the server-side fallback
+  option for refusals on Claude Sonnet 5.5. Ordinary calls work; a refusal has
+  not been seen, so that path is unexercised.
 
 ## Status
 
