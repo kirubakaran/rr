@@ -81,7 +81,8 @@ set, which suits CI or a one-off override. To remove the stored key:
 The Keychain item is read through `/usr/bin/security`, so other programs
 running as you can read it the same way; it is kept out of your shell
 environment and dotfiles, not locked to rr.
- For a local model through Ollama:
+
+For a local model through Ollama:
 
 ```json
 { "provider": "openai", "model": "gemma4:31b-mxfp8" }
@@ -90,10 +91,10 @@ environment and dotfiles, not locked to rr.
 `provider: "openai"` means any OpenAI-compatible endpoint and defaults to
 Ollama at `http://localhost:11434/v1`.
 
-## Why build it
+## How it differs from other tools
 
 Existing CLIs manage Reminders programmatically: you translate your intention
-into flags. This tool is for the step before that: saying a complicated
+into flags. rr is for the step before that: saying a complicated
 reminder in one sentence and seeing what it will actually do before it exists.
 
 | | rr | [rem](https://github.com/BRO3886/rem) | [remi](https://github.com/mattheworiordan/remi) | [remindctl](https://github.com/steipete/remindctl) | [reminders-cli](https://github.com/keith/reminders-cli) | [Raycast Apple Reminders](https://www.raycast.com/raycast/apple-reminders) |
@@ -156,14 +157,14 @@ Reminders shows the time but does not notify.
 - **One recurrence representation.** The preview and the writer use the same
   rule object, so the dates you approve are the dates Apple creates.
 - **The model does not do date arithmetic.** It only extracts structure.
-- **Narrow first.** Start with a small set of recurrence shapes and widen from
-  real use. Month ends, leap years and daylight-saving changes need tests.
+- **Narrow on purpose.** A small set of recurrence shapes, each covered by
+  tests for month ends, leap years and daylight-saving changes. Anything else
+  is refused.
 
 ## Model
 
-The provider is configurable from day one: provider, model and endpoint are
-settings, not code. Anthropic's API plus any OpenAI-compatible endpoint (which
-is what Ollama exposes) covers nearly everything.
+Provider, model and endpoint are settings. rr speaks Anthropic's API and any
+OpenAI-compatible endpoint, which is what Ollama exposes.
 
 - **Default: Claude Sonnet 5.5** (`claude-sonnet-5-5`), about $0.004 per
   reminder (estimate: ~700 tokens in, ~300 out at $2 / $10 per million).
@@ -172,42 +173,30 @@ is what Ollama exposes) covers nearly everything.
   `gemma4:31b-mxfp8`: about 35 seconds for the first call while the model
   loads. A 3–4B model should be faster but has not been tried.
 
-## Constraints found so far
+## Limits
 
 - **EventKit is required.** AppleScript's Reminders support has no recurrence,
   so the whole tool is one Swift binary. It needs a one-time macOS permission
   prompt for Reminders access; the usage string is embedded at link time.
 - **Not in EventKit:** tags, subtasks, sections. `rem` reaches tags and `remi`
   reaches sections through Apple's private ReminderKit framework (`remi` also
-  writes the Reminders SQLite database directly). Possible, but unsupported by
-  Apple and liable to break on an OS update, so out of scope for now.
+  writes the Reminders SQLite database directly). That is unsupported by Apple
+  and liable to break on an OS update, so rr does not do it.
 - **Mac only.** Siri remains the phone input.
 
-## Still to test
+## Testing
 
 Unit tests cover the date arithmetic (month ends, leap years, a daylight-saving
-change, cycle alignment) and the conversion to EventKit rules. The model path
-was run end to end in dry-run mode against Claude Sonnet 5.5 and a local
-Ollama model. Not yet done:
+change, cycle alignment) and the conversion to EventKit rules. Not yet verified:
 
-- **A real write.** No reminder has been created yet. Create one recurring
-  reminder with a three-day-early alert, complete it on the iPhone, and check
-  that the next occurrence and both alerts appear. Apple documents the APIs,
-  not that end-to-end behaviour.
 - **Apple's dates against the preview** for the less common shapes: yearly
   rules in several months, the 31st in short months, and every-N-weeks rules
   that include Sunday (the preview flags that last one as an assumption).
+- **Completing a recurring reminder on the iPhone** and checking that the next
+  occurrence keeps its early alert.
 - **Refusal fallback.** The Anthropic request sets the server-side fallback
-  option for refusals on Claude Sonnet 5.5. Ordinary calls work; a refusal has
-  not been seen, so that path is unexercised.
-
-## Status
-
-Built 2026-11-13, version 0.1.0, installed at `~/.local/bin/rr`.
-
-The name `rr` clashes only with Mozilla's Linux-only record-and-replay
-debugger. `rem` and `remi` were ruled out because both are existing Apple
-Reminders CLIs.
+  option for refusals on Claude Sonnet 5.5; a refusal has not been seen, so
+  that path is unexercised.
 
 ## License
 
